@@ -44,9 +44,9 @@ const argv = yargs(hideBin(process.argv))
   })
   .option("authentication", {
     alias: "a",
-    describe: "Type of authentication to use. Supported values are 'interactive', 'azcli' and 'env' (default: 'interactive')",
+    describe: "Type of authentication to use. Supported values are 'interactive', 'azcli', 'env', and 'pat' (default: 'interactive')",
     type: "string",
-    choices: ["interactive", "azcli", "env"],
+    choices: ["interactive", "azcli", "env", "pat"],
     default: defaultAuthenticationType,
   })
   .option("tenant", {
@@ -54,19 +54,27 @@ const argv = yargs(hideBin(process.argv))
     describe: "Azure tenant ID (optional, applied when using 'interactive' and 'azcli' type of authentication)",
     type: "string",
   })
+  .option("url", {
+    alias: "u",
+    describe: "Custom Azure DevOps Server URL for on-premise installations (e.g., 'https://server/collection'). If not provided, defaults to Azure DevOps Services at https://dev.azure.com/{organization}",
+    type: "string",
+  })
   .help()
   .parseSync();
 
 export const orgName = argv.organization as string;
-const orgUrl = "https://dev.azure.com/" + orgName;
+const orgUrl = argv.url || ("https://dev.azure.com/" + orgName);
 
 const domainsManager = new DomainsManager(argv.domains);
 export const enabledDomains = domainsManager.getEnabledDomains();
 
-function getAzureDevOpsClient(getAzureDevOpsToken: () => Promise<string>, userAgentComposer: UserAgentComposer): () => Promise<azdev.WebApi> {
+function getAzureDevOpsClient(getAzureDevOpsToken: () => Promise<string>, userAgentComposer: UserAgentComposer, authType: string): () => Promise<azdev.WebApi> {
   return async () => {
     const accessToken = await getAzureDevOpsToken();
-    const authHandler = azdev.getBearerHandler(accessToken);
+    // Use PAT handler for on-premise servers, Bearer handler for OAuth
+    const authHandler = authType === "pat"
+      ? azdev.getPersonalAccessTokenHandler(accessToken)
+      : azdev.getBearerHandler(accessToken);
     const connection = new azdev.WebApi(orgUrl, authHandler, undefined, {
       productName: "AzureDevOps.MCP",
       productVersion: packageVersion,
@@ -97,7 +105,7 @@ async function main() {
   // removing prompts untill further notice
   // configurePrompts(server);
 
-  configureAllTools(server, authenticator, getAzureDevOpsClient(authenticator, userAgentComposer), () => userAgentComposer.userAgent, enabledDomains);
+  configureAllTools(server, authenticator, getAzureDevOpsClient(authenticator, userAgentComposer, argv.authentication), () => userAgentComposer.userAgent, enabledDomains);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
